@@ -1,4 +1,7 @@
-import { createSupabaseServerClient, getSupabasePublicConfig } from "@/lib/supabase";
+import {
+  createSupabaseServerClient,
+  getSupabasePublicConfig,
+} from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
@@ -24,12 +27,15 @@ export async function GET() {
 
   const supabase = createSupabaseServerClient();
   if (!supabase) {
-    return json({
-      ok: false,
-      state: "invalid_config",
-      message: "إعدادات Supabase غير مكتملة.",
-      storageSwitched: false,
-    }, 500);
+    return json(
+      {
+        ok: false,
+        state: "invalid_config",
+        message: "إعدادات Supabase غير مكتملة.",
+        storageSwitched: false,
+      },
+      500,
+    );
   }
 
   try {
@@ -53,19 +59,22 @@ export async function GET() {
     if (
       code === "42P01" ||
       message.includes("Could not find the table") ||
-      message.includes("relation \"public.receipts\" does not exist")
+      message.includes('relation "public.receipts" does not exist')
     ) {
       return json({
         ok: false,
         state: "schema_missing",
-        message: "تم الوصول إلى Supabase، لكن جدول receipts غير موجود. شغّل ملف SQL أولاً.",
+        message:
+          "تم الوصول إلى Supabase، لكن جدول receipts غير موجود. شغّل ملف SQL أولاً.",
         storageSwitched: false,
       });
     }
 
     if (
       code === "42501" ||
-      /permission denied|row-level security|unauthorized|forbidden/i.test(message)
+      /permission denied|row-level security|unauthorized|forbidden/i.test(
+        message,
+      )
     ) {
       return json({
         ok: true,
@@ -84,11 +93,15 @@ export async function GET() {
       storageSwitched: false,
     });
   } catch {
-    return json({
-      ok: false,
-      state: "unreachable",
-      message: "تعذر الوصول إلى Supabase. تحقق من رابط المشروع أو الاتصال بالإنترنت.",
-      storageSwitched: false,
-    }, 503);
+    return json(
+      {
+        ok: false,
+        state: "unreachable",
+        message:
+          "تعذر الوصول إلى Supabase. تحقق من رابط المشروع أو الاتصال بالإنترنت.",
+        storageSwitched: false,
+      },
+      503,
+    );
   }
 }
