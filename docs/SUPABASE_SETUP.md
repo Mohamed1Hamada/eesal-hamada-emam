@@ -1,54 +1,44 @@
-# ربط Supabase — خطوة بخطوة
+# ربط وتشغيل Supabase — خطوة بخطوة
 
-المشروع الحالي ما زال يحفظ الإيصالات في `localStorage`. هذه الخطوة تجهّز Supabase فقط، ولن ننقل الحفظ إليه حتى نتأكد أن الاتصال والجداول والأمان جاهزون.
+التطبيق يعمل تلقائياً في وضعين:
+- **بدون `.env.local`:** يعمل محلياً على المتصفح (`localStorage`) للتجربة السريعة.
+- **بمجرد وضع مفاتيح Supabase في `.env.local`:** يفعّل شاشة **تسجيل دخول المكتب** تلقائياً ويحفظ ويسترجع الإيصالات مباشرة من قاعدة بيانات **Supabase**.
 
-## 1) وضع بيانات الاتصال في جهازك فقط
+---
 
-1. من أعلى صفحة Supabase اضغط **Connect**.
-2. اختر **Next.js** أو **App Frameworks** إذا ظهرت.
-3. انسخ قيمتين فقط:
+## 1) وضع بيانات الاتصال في جهازك (أو على Vercel)
+
+1. من أعلى لوحة تحكم Supabase اضغط **Connect**.
+2. انسخ القيمتين العامتين فقط:
    - `Project URL`
-   - `Publishable Key` — وقد يظهر باسم `Anon Key` في بعض المشاريع.
-4. في جذر المشروع، بجوار `package.json`، أنشئ ملفاً باسم `.env.local`.
-5. انسخ محتوى `.env.example` إلى `.env.local` واستبدل القيم الوهمية بقيم مشروعك.
-6. أعد تشغيل المشروع:
+   - `Publishable Key` (أو `Anon Key`)
+3. أنشئ ملفاً باسم `.env.local` في جذر المشروع بجوار `package.json`:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
+```
+
+4. أعد تشغيل السيرفر:
 
 ```bash
 npm run dev
 ```
 
-لا ترسل في المحادثة أي `Secret Key` أو `service_role` أو كلمة سر قاعدة البيانات أو JWT Secret.
+*(لا تضع أي `service_role` أو `Secret Key` في ملفات الواجهة أو في Git).*
 
-## 2) إنشاء الجداول
+---
 
-1. من القائمة الجانبية في Supabase افتح **SQL Editor**.
-2. اضغط **New query**.
-3. افتح من المشروع الملف:
+## 2) تشغيل ملفات قاعدة البيانات (SQL Migrations)
 
-```text
-supabase/migrations/20261107150000_create_eesal_receipts.sql
-```
+من **Supabase → SQL Editor** شغّل بالترتيب:
+1. `supabase/migrations/20261107150000_create_eesal_receipts.sql`
+2. `supabase/migrations/20261108163000_complete_eesal_backend.sql`
 
-4. انسخ محتواه كاملاً إلى SQL Editor واضغط **Run**.
-5. النتيجة المطلوبة: نجاح التنفيذ بدون أخطاء.
+---
 
-هذا الملف ينشئ جدولي `receipts` و`receipt_items` ويفعّل Row Level Security بدون فتح البيانات للعامة.
+## 3) إعداد مستخدم المكتب (Authentication)
 
-## 3) فحص الاتصال
-
-بعد إعادة تشغيل التطبيق افتح:
-
-```text
-http://localhost:3000/api/supabase/status
-```
-
-معاني النتائج:
-
-- `not_configured`: قيم `.env.local` ناقصة أو لم تتم إعادة تشغيل السيرفر.
-- `schema_missing`: الاتصال موجود، لكن ملف SQL لم يعمل بعد.
-- `rls_protected`: النتيجة المتوقعة والآمنة في هذه الخطوة؛ الجدول موجود والوصول مقفل حتى نضيف تسجيل الدخول.
-- `connected`: الاتصال والجدول جاهزان.
-
-## 4) ما الخطوة التالية؟
-
-أخبرني فقط بكلمة الحالة التي ظهرت لك (`rls_protected` مثلاً)، ولا ترسل أي مفاتيح. بعدها سنضيف تسجيل الدخول وصلاحيات المكتب، ثم نحوّل حفظ الإيصالات من المتصفح إلى Supabase.
+1. من **Authentication → Sign In / Providers** عطّل خيار **Allow new users to sign up**.
+2. من **Authentication → Users** اضغط **Add user → Create new user**، وأنشئ بريد وكلمة مرور المكتب مع تفعيل **Auto Confirm User**.
+3. افتح الموقع وسجّل الدخول؛ سيتم حفظ جميع الإيصالات وبنودها تلقائياً عبر دالة المعاملة الموحدة `save_receipt_with_items`.

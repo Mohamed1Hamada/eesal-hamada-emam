@@ -5,12 +5,13 @@ export interface SupabasePublicConfig {
   publishableKey: string;
 }
 
+let browserClient: SupabaseClient | null = null;
+
 /**
- * يقرأ إعدادات Supabase العامة فقط.
- * لا تتم قراءة أي مفتاح سري هنا، ولا يتم إرجاع قيمة المفتاح إلى المتصفح.
+ * قراءة إعدادات Supabase العامة مع تجاهل القيم الافتراضية الوهمية في .env.example.
  */
 export function getSupabasePublicConfig(): SupabasePublicConfig | null {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
   const publishableKey = (
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
@@ -18,10 +19,23 @@ export function getSupabasePublicConfig(): SupabasePublicConfig | null {
   ).trim();
 
   if (!url || !publishableKey) return null;
+  if (
+    url.includes("your-project-ref") ||
+    publishableKey.includes("your_public_key_here")
+  ) {
+    return null;
+  }
 
   return { url, publishableKey };
 }
 
+export function isSupabaseConfigured(): boolean {
+  return getSupabasePublicConfig() !== null;
+}
+
+/**
+ * عميل Supabase للسيرفر (API Routes / Server Components).
+ */
 export function createSupabaseServerClient(): SupabaseClient | null {
   const config = getSupabasePublicConfig();
   if (!config) return null;
@@ -33,4 +47,18 @@ export function createSupabaseServerClient(): SupabaseClient | null {
       detectSessionInUrl: false,
     },
   });
+}
+
+/**
+ * عميل Supabase للمتصفح (يحفظ جلسة تسجيل الدخول للمكتب تلقائياً).
+ */
+export function createSupabaseBrowserClient(): SupabaseClient | null {
+  const config = getSupabasePublicConfig();
+  if (!config) return null;
+
+  if (!browserClient) {
+    browserClient = createClient(config.url, config.publishableKey);
+  }
+
+  return browserClient;
 }

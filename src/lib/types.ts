@@ -12,14 +12,21 @@ export type PaymentMethod =
   | "bank_transfer" // تحويل بنكي
   | "check"; // شيك
 
+export type SubmissionStatus =
+  | "draft"
+  | "submitted"
+  | "accepted"
+  | "rejected"
+  | "failed";
+
 export interface TaxRate {
-  code: string; // كود الضريبة في مصلحة الضرائب
+  code: string; // كود الضريبة
   name: string;
-  rate: number; // النسبة
+  shortLabel: string; // اسم مختصر للطباعة
+  rate: number; // النسبة العشرية (مثال: 0.14)
 }
 
 export interface SellerInfo {
-  // بيانات المكتب
   name: string;
   taxNumber: string; // رقم التسجيل الضريبي
   commercialRegister?: string;
@@ -33,7 +40,6 @@ export interface SellerInfo {
 }
 
 export interface BuyerInfo {
-  // بيانات العميل
   name: string;
   taxNumber?: string; // رقم التسجيل الضريبي (اختياري للأفراد)
   nationalId?: string; // الرقم القومي
@@ -51,11 +57,11 @@ export interface ReceiptItem {
   unitPrice: number;
   taxCode: string; // كود الضريبة
   taxRate: number;
-  discount: number; // خصم على الصنف (نسبة)
+  discount: number; // خصم على الصنف (نسبة 0 - 100)
 }
 
 export interface ReceiptTotals {
-  subtotal: number; // إجمالي قبل الضريبة
+  subtotal: number; // إجمالي قبل الخصم والضريبة
   totalDiscount: number;
   totalTax: number;
   total: number;
@@ -63,22 +69,23 @@ export interface ReceiptTotals {
   changeAmount?: number;
 }
 
+export interface ReceiptSubmission {
+  uuid?: string; // UUID من مصلحة الضرائب
+  status: SubmissionStatus;
+  submittedAt?: string;
+  errorMessage?: string;
+}
+
 export interface Receipt {
   id?: string;
   receiptNumber: string;
   receiptType: ReceiptType;
-  dateTime: string; // ISO
+  dateTime: string; // ISO 8601
   seller: SellerInfo;
   buyer: BuyerInfo;
   items: ReceiptItem[];
   paymentMethod: PaymentMethod;
   totals: ReceiptTotals;
   notes?: string;
-  // بيانات الإرسال للضرائب (تحفظ بعد الإرسال)
-  submission?: {
-    uuid?: string; // UUID from ETA
-    status: "draft" | "submitted" | "accepted" | "rejected" | "failed";
-    submittedAt?: string;
-    errorMessage?: string;
-  };
+  submission?: ReceiptSubmission;
 }

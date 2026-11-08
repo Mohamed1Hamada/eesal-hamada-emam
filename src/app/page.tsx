@@ -1,55 +1,145 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import ReceiptForm, { createEmptyItem } from "@/components/ReceiptForm";
-import ReceiptPreview from "@/components/ReceiptPreview";
 import {
-  OFFICE_INFO,
-  generateReceiptNumber,
-  nowISO,
-} from "@/lib/static-data";
-import { calculateTotals, mockUUID } from "@/lib/calculations";
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import type { Session } from "@supabase/supabase-js";
+import ReceiptForm from "@/components/ReceiptForm";
+import ReceiptPreview from "@/components/ReceiptPreview";
+import LoginScreen from "@/components/LoginScreen";
+import { OFFICE_INFO, nowISO } from "@/lib/static-data";
+import {
+  generateUUID,
+  validateReceiptForSubmission,
+} from "@/lib/calculations";
+import {
+  createSupabaseBrowserClient,
+  isSupabaseConfigured,
+} from "@/lib/supabase";
+import {
+  createEmptyReceipt,
+  receiptRepository,
+} from "@/lib/receipt-repository";
 import type { Receipt } from "@/lib/types";
 
-// إنشاء إيصال جديد بالبيانات الافتراضية
-function createEmptyReceipt(): Receipt {
-  const items = [
-    {
-      ...createEmptyItem(),
-      description: "خدمات محاسبية ومراجعة",
-      unitPrice: 1000,
-      quantity: 1,
-    },
-  ];
-  return {
-    receiptNumber: generateReceiptNumber(),
-    receiptType: "cash",
-    dateTime: nowISO(),
-    seller: OFFICE_INFO,
-    buyer: {
-      name: "",
-      type: "person",
-      taxNumber: "",
-      nationalId: "",
-      address: "",
-      phone: "",
-    },
-    items,
-    paymentMethod: "cash",
-    totals: calculateTotals(items),
-    notes: "",
-    submission: {
-      status: "draft",
-    },
-  };
-}
-
-// مفتاح الـ localStorage
-const DRAFT_KEY = "eta-receipt-draft";
-const HISTORY_KEY = "eta-receipt-history";
+const emptySubscribe = () => () => {};
 
 export default function Home() {
-  const [receipt, setReceipt] = useState<Receipt>(createEmptyReceipt);
+  const isClient = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+
+  if (!isClient) {
+    return (
+      <div className="min-h-screen">
+        <header className="no-print bg-[var(--brand)] text-white shadow-lg">
+          <div className="max-w-7xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-xl md:text-2xl font-bold">
+                نظام الإيصالات الإلكترونية
+              </h1>
+              <p className="text-sm text-white/80">
+                {OFFICE_INFO.name} • مكتب محاسب قانوني
+              </p>
+            </div>
+          </div>
+        </header>
+      </div>
+    );
+  }
+
+  if (isSupabaseConfigured()) {
+    return <AuthenticatedApp />;
+  }
+
+  return <ReceiptApp userEmail={null} onSignOut={null} />;
+}
+
+function AuthenticatedApp() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
+  useEffect(() => {
+    const supabase = createSupabaseBrowserClient();
+    if (!supabase) {
+      return;
+    }
+
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted) {
+        setSession(data.session);
+        setCheckingAuth(false);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (mounted) {
+        setSession(nextSession);
+        setCheckingAuth(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  async function handleSignOut() {
+    const supabase = createSupabaseBrowserClient();
+    await supabase?.auth.signOut();
+  }
+
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen">
+        <header className="no-print bg-[var(--brand)] text-white shadow-lg">
+          <div className="max-w-7xl mx-auto px-4 py-4">
+            <h1 className="text-xl md:text-2xl font-bold">
+              نظام الإيصالات الإلكترونية
+            </h1>
+            <p className="text-sm text-white/80">
+              {OFFICE_INFO.name} • مكتب محاسب قانوني
+            </p>
+          </div>
+        </header>
+        <main className="max-w-7xl mx-auto px-4 py-12 text-center text-sm text-slate-500">
+          جاري التحقق من جلسة الدخول...
+        </main>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <LoginScreen />;
+  }
+
+  return (
+    <ReceiptApp
+      userEmail={session.user.email ?? null}
+      onSignOut={handleSignOut}
+    />
+  );
+}
+
+function ReceiptApp({
+  userEmail,
+  onSignOut,
+}: {
+  userEmail: string | null;
+  onSignOut: (() => void) | null;
+}) {
+  const [receipt, setReceipt] = useState<Receipt>(
+    () => receiptRepository.loadDraft() ?? createEmptyReceipt()
+  );
   const [history, setHistory] = useState<Receipt[]>([]);
   const [activeTab, setActiveTab] = useState<"new" | "history">("new");
   const [toast, setToast] = useState<{
@@ -57,119 +147,138 @@ export default function Home() {
     message: string;
   } | null>(null);
 
-  // تحميل المسودة والسجل من localStorage
+  const submitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // تحميل السجل من المخزن النشط (Supabase أو localStorage)
   useEffect(() => {
-    try {
-      const draft = localStorage.getItem(DRAFT_KEY);
-      if (draft) {
-        const parsed = JSON.parse(draft) as Receipt;
-        if (parsed?.submission?.status === "draft") {
-          // بيانات المكتب ثابتة؛ نحدّثها في المسودة دون تغيير بيانات العميل أو الأصناف.
-          setReceipt({ ...parsed, seller: OFFICE_INFO });
-        }
-      }
-      const hist = localStorage.getItem(HISTORY_KEY);
-      if (hist) setHistory(JSON.parse(hist));
-    } catch {}
+    let active = true;
+    receiptRepository
+      .listReceipts()
+      .then((items) => {
+        if (active) setHistory(items);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
   }, []);
 
-  // حفظ المسودة تلقائياً
+  // حفظ المسودة تلقائياً (أو حذفها من المسودات عند قبول الإيصال)
   useEffect(() => {
-    try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(receipt));
-    } catch {}
+    receiptRepository.saveDraft(receipt);
   }, [receipt]);
 
-  // حفظ السجل
+  // تنظيف مؤقت المحاكاة عند إغلاق المكون
   useEffect(() => {
-    try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-    } catch {}
-  }, [history]);
+    return () => {
+      if (submitTimerRef.current) {
+        clearTimeout(submitTimerRef.current);
+      }
+    };
+  }, []);
 
-  // Toast timer
+  // إخفاء الإشعار تلقائياً
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 4000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
   }, [toast]);
 
-  const canSubmit = useMemo(() => {
-    return (
-      receipt.buyer.name.trim() !== "" &&
-      receipt.items.length > 0 &&
-      receipt.items.every((i) => i.description.trim() !== "")
-    );
-  }, [receipt]);
+  function cancelPendingSubmit() {
+    if (submitTimerRef.current) {
+      clearTimeout(submitTimerRef.current);
+      submitTimerRef.current = null;
+    }
+  }
 
   function handlePrint() {
     window.print();
   }
 
-  function handleNewReceipt() {
-    setReceipt(createEmptyReceipt());
+  async function handleNewReceipt() {
+    cancelPendingSubmit();
+    receiptRepository.clearDraft();
+    const nextNumber = await receiptRepository.nextReceiptNumber();
+    setReceipt(createEmptyReceipt(nextNumber));
     setActiveTab("new");
     setToast({ type: "info", message: "تم إنشاء إيصال جديد" });
   }
 
   function handleMockSubmit() {
-    if (!canSubmit) {
+    const validationError = validateReceiptForSubmission(receipt);
+    if (validationError) {
       setToast({
         type: "error",
-        message: "من فضلك أكمل بيانات العميل والأصناف أولاً",
+        message: validationError,
       });
       return;
     }
 
-    // محاكاة الإرسال لمصلحة الضرائب
-    setReceipt({
+    cancelPendingSubmit();
+
+    const submittedReceipt: Receipt = {
       ...receipt,
       submission: { status: "submitted", submittedAt: nowISO() },
-    });
+    };
+    setReceipt(submittedReceipt);
 
     setToast({
       type: "info",
       message: "جاري إرسال الإيصال لمصلحة الضرائب (محاكاة)...",
     });
 
-    setTimeout(() => {
-      // محاكاة نجاح 90% من الحالات
-      const success = Math.random() > 0.1;
+    submitTimerRef.current = setTimeout(async () => {
+      submitTimerRef.current = null;
       const finalReceipt: Receipt = {
-        ...receipt,
-        submission: success
-          ? {
-              status: "accepted",
-              submittedAt: nowISO(),
-              uuid: mockUUID(),
-            }
-          : {
-              status: "rejected",
-              submittedAt: nowISO(),
-              errorMessage: "بيانات العميل غير مكتملة",
-            },
+        ...submittedReceipt,
+        submission: {
+          status: "accepted",
+          submittedAt: nowISO(),
+          uuid: generateUUID(),
+        },
       };
-      setReceipt(finalReceipt);
 
-      if (success) {
-        // إضافة للسجل
-        setHistory((h) => [finalReceipt, ...h].slice(0, 50));
-        localStorage.removeItem(DRAFT_KEY);
+      try {
+        const savedReceipt = await receiptRepository.saveReceipt(finalReceipt);
+        const updatedHistory = await receiptRepository.listReceipts();
+
+        setReceipt((current) =>
+          current.id === submittedReceipt.id ? savedReceipt : current
+        );
+        setHistory(updatedHistory);
+        receiptRepository.clearDraft();
+
         setToast({
           type: "success",
           message:
-            "✅ تم إرسال الإيصال وقبوله بنجاح! يمكنك الآن طباعته للعميل.",
+            receiptRepository.mode === "supabase"
+              ? "✅ تم قبول الإيصال وحفظه في قاعدة بيانات Supabase بنجاح!"
+              : "✅ تم إرسال الإيصال وقبوله بنجاح! يمكنك الآن طباعته للعميل.",
         });
-      } else {
+      } catch (err) {
+        const errMsg =
+          err instanceof Error ? err.message : "تعذر حفظ الإيصال في قاعدة البيانات";
+        const failedReceipt: Receipt = {
+          ...submittedReceipt,
+          submission: {
+            status: "failed",
+            submittedAt: nowISO(),
+            errorMessage: errMsg,
+          },
+        };
+        setReceipt((current) =>
+          current.id === submittedReceipt.id ? failedReceipt : current
+        );
         setToast({
           type: "error",
-          message: "❌ تم رفض الإيصال من مصلحة الضرائب (محاكاة)",
+          message: `❌ فشل حفظ الإيصال: ${errMsg}`,
         });
       }
-    }, 1800);
+    }, 900);
   }
 
   function loadFromHistory(r: Receipt) {
+    cancelPendingSubmit();
     setReceipt(r);
     setActiveTab("new");
     setToast({ type: "info", message: "تم تحميل الإيصال من السجل" });
@@ -209,7 +318,19 @@ export default function Home() {
               {OFFICE_INFO.name} • مكتب محاسب قانوني
             </p>
           </div>
-          <div className="flex items-center gap-2">{statusBadge}</div>
+          <div className="flex items-center gap-2">
+            {statusBadge}
+            {onSignOut && (
+              <button
+                type="button"
+                onClick={onSignOut}
+                title={userEmail ?? undefined}
+                className="px-3 py-1 rounded-full text-xs font-medium bg-white/15 hover:bg-white/25 text-white transition"
+              >
+                تسجيل خروج
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -217,6 +338,7 @@ export default function Home() {
       <nav className="no-print bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 flex gap-1">
           <button
+            type="button"
             onClick={() => setActiveTab("new")}
             className={`px-4 py-3 text-sm font-medium border-b-2 transition ${
               activeTab === "new"
@@ -227,6 +349,7 @@ export default function Home() {
             إيصال جديد
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab("history")}
             className={`px-4 py-3 text-sm font-medium border-b-2 transition ${
               activeTab === "history"
@@ -238,6 +361,7 @@ export default function Home() {
           </button>
           <div className="flex-1" />
           <button
+            type="button"
             onClick={handleNewReceipt}
             className="my-2 px-3 py-1.5 text-sm rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
           >
@@ -261,9 +385,9 @@ export default function Home() {
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto px-4 py-6">
+      <main className="max-w-7xl mx-auto px-4 py-6 print-full">
         {activeTab === "new" ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start print-full">
             {/* العمود الأيمن: الفورم */}
             <div className="no-print">
               <ReceiptForm receipt={receipt} setReceipt={setReceipt} />
@@ -271,12 +395,14 @@ export default function Home() {
               {/* أزرار الإجراءات */}
               <div className="mt-6 bg-white rounded-xl p-5 shadow-sm border border-slate-200 flex flex-wrap gap-3">
                 <button
+                  type="button"
                   onClick={handlePrint}
                   className="px-5 py-2.5 bg-slate-800 text-white rounded-lg font-medium hover:bg-slate-900 transition flex items-center gap-2"
                 >
                   🖨️ طباعة الإيصال
                 </button>
                 <button
+                  type="button"
                   onClick={handleMockSubmit}
                   disabled={
                     receipt.submission?.status === "submitted" ||
@@ -287,6 +413,7 @@ export default function Home() {
                   📤 إرسال لمصلحة الضرائب
                 </button>
                 <button
+                  type="button"
                   onClick={handleNewReceipt}
                   className="px-5 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition"
                 >
@@ -296,16 +423,32 @@ export default function Home() {
 
               {/* ملاحظة المرحلة */}
               <div className="mt-4 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg p-4 text-sm">
-                <div className="font-bold mb-1">💡 المرحلة الحالية: البيانات الثابتة (Static)</div>
+                <div className="font-bold mb-1">
+                  {receiptRepository.mode === "supabase"
+                    ? "☁️ وضع التشغيل: متصل بقاعدة بيانات Supabase"
+                    : "💡 وضع التشغيل المحلي (لحين إضافة مفاتيح .env.local)"}
+                </div>
                 <ul className="list-disc list-inside space-y-0.5 text-xs text-blue-800 mt-2">
-                  <li>بيانات المكتب محفوظة في <code className="bg-blue-100 px-1 rounded">src/lib/static-data.ts</code></li>
-                  <li>جميع الإيصالات محفوظة في الـ localStorage فقط</li>
-                  <li>زر "الإرسال للضرائب" محاكاة بدون اتصال حقيقي بالـ API</li>
-                  <li>تم تجهيز خطوة Supabase الأولى: ملف إعدادات ومخطط جداول وفحص اتصال</li>
-                  <li>الحفظ ما زال محلياً حتى نضيف تسجيل الدخول وصلاحيات المكتب</li>
+                  <li>
+                    بيانات المكتب محفوظة في{" "}
+                    <code className="bg-blue-100 px-1 rounded">
+                      src/lib/static-data.ts
+                    </code>
+                  </li>
+                  <li>
+                    {receiptRepository.mode === "supabase"
+                      ? `يتم حفظ واسترجاع الإيصالات مباشرة من Supabase (${userEmail ?? "حساب المكتب"})`
+                      : "الإيصالات تُحفظ حالياً في localStorage حتى تضيف مفاتيح Supabase في .env.local"}
+                  </li>
+                  <li>زر «الإرسال للضرائب» محاكاة بدون اتصال حقيقي بمنظومة ETA بعد</li>
                   <li>
                     حالة الاتصال:{" "}
-                    <a className="underline font-medium" href="/api/supabase/status" target="_blank" rel="noreferrer">
+                    <a
+                      className="underline font-medium"
+                      href="/api/supabase/status"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       /api/supabase/status
                     </a>
                   </li>
@@ -314,7 +457,7 @@ export default function Home() {
             </div>
 
             {/* العمود الأيسر: المعاينة */}
-            <div>
+            <div className="print-full">
               <div className="no-print mb-3 text-sm font-semibold text-slate-600 text-center">
                 👁️ معاينة الإيصال (شكل الطباعة)
               </div>
@@ -327,9 +470,9 @@ export default function Home() {
             {history.length === 0 ? (
               <div className="p-12 text-center text-slate-500">
                 <div className="text-4xl mb-2">📭</div>
-                <div className="text-lg font-medium">لا يوجد إيصات بعد</div>
+                <div className="text-lg font-medium">لا توجد إيصالات بعد</div>
                 <div className="text-sm mt-1">
-                  الإيصات المقبولة من مصلحة الضرائب ستظهر هنا
+                  الإيصالات المقبولة من مصلحة الضرائب ستظهر هنا
                 </div>
               </div>
             ) : (
@@ -361,7 +504,7 @@ export default function Home() {
                   <tbody>
                     {history.map((h) => (
                       <tr
-                        key={h.receiptNumber + h.submission?.uuid}
+                        key={h.id ?? h.receiptNumber + (h.submission?.uuid ?? "")}
                         className="border-b border-slate-100 hover:bg-slate-50"
                       >
                         <td className="px-4 py-3 font-mono text-xs" dir="ltr">
@@ -389,6 +532,7 @@ export default function Home() {
                         </td>
                         <td className="px-4 py-3">
                           <button
+                            type="button"
                             onClick={() => loadFromHistory(h)}
                             className="text-[var(--brand)] hover:underline text-xs font-medium"
                           >
@@ -408,8 +552,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="no-print border-t border-slate-200 bg-white mt-8">
         <div className="max-w-7xl mx-auto px-4 py-4 text-center text-xs text-slate-500">
-          نظام الإيصالات الإلكترونية • مرحلة التطوير الأولى (Static Data) •
-          {OFFICE_INFO.name}
+          نظام الإيصالات الإلكترونية • مرحلة التطوير الأولى • {OFFICE_INFO.name}
         </div>
       </footer>
     </div>

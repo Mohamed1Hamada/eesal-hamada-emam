@@ -8,13 +8,14 @@
   }
   html,
   body {
-    font-family: inherit;
+    font-family: "Cairo", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+      sans-serif;
   }
   body {
     @apply bg-slate-50;
   }
   .form-input {
-    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-[var(--brand)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/20;
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-[var(--brand)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/20 disabled:bg-slate-100 disabled:text-slate-600;
   }
   .form-input::placeholder {
     @apply text-slate-400;
@@ -59,8 +60,11 @@
     size: 80mm auto;
     margin: 0;
   }
+  html,
   body {
     background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
   .no-print {
     display: none !important;
@@ -68,21 +72,25 @@
   .print-only {
     display: block !important;
   }
-  .receipt-print {
-    box-shadow: none !important;
-    border: none !important;
-    margin: 0 !important;
-    padding: 8px !important;
-    width: 80mm !important;
-    max-width: 80mm !important;
-  }
   .print-full {
     width: 100% !important;
     max-width: none !important;
     margin: 0 !important;
     padding: 0 !important;
+    display: block !important;
+  }
+  .receipt-print {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 auto !important;
+    padding: 8px !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
+
 .print-only {
   display: none;
 }

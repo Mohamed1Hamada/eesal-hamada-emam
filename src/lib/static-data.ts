@@ -1,7 +1,12 @@
-import type { SellerInfo, TaxRate, ReceiptType, PaymentMethod } from "./types";
+import type {
+  SellerInfo,
+  TaxRate,
+  ReceiptType,
+  PaymentMethod,
+} from "./types";
 
 // ============================================
-// ⚠️  بيانات المكتب - غيرها بيانات مكتبك الحقيقية
+// بيانات المكتب الثابتة (تُستبدل ببيانات المكتب الفعلية أو جدول الإعدادات لاحقاً)
 // ============================================
 export const OFFICE_INFO: SellerInfo = {
   name: "مكتب حماده امام عبد الفتاح",
@@ -17,14 +22,39 @@ export const OFFICE_INFO: SellerInfo = {
 };
 
 // ============================================
-//  الضرائب اللي بنستخدمها في المحاسبة القانونية
+// الضرائب المستخدمة في المحاسبة القانونية
 // ============================================
 export const TAX_RATES: TaxRate[] = [
-  { code: "1", name: "ضريبة القيمة المضافة (14%)", rate: 0.14 },
-  { code: "2", name: "ضريبة القيمة المضافة (0%) تصدير", rate: 0 },
-  { code: "3", name: "ضريبة جدولية (1%)", rate: 0.01 },
-  { code: "4", name: "غير خاضع للضريبة", rate: 0 },
-  { code: "5", name: "معفي من الضريبة", rate: 0 },
+  {
+    code: "1",
+    name: "ضريبة القيمة المضافة (14%)",
+    shortLabel: "ض.ق.م 14%",
+    rate: 0.14,
+  },
+  {
+    code: "2",
+    name: "ضريبة القيمة المضافة (0%) تصدير",
+    shortLabel: "ض.ق.م 0% تصدير",
+    rate: 0,
+  },
+  {
+    code: "3",
+    name: "ضريبة جدولية (1%)",
+    shortLabel: "ض.جدول 1%",
+    rate: 0.01,
+  },
+  {
+    code: "4",
+    name: "غير خاضع للضريبة",
+    shortLabel: "غير خاضع للضريبة",
+    rate: 0,
+  },
+  {
+    code: "5",
+    name: "معفي من الضريبة",
+    shortLabel: "معفي من الضريبة",
+    rate: 0,
+  },
 ];
 
 // أنواع الإيصالات
@@ -35,6 +65,13 @@ export const RECEIPT_TYPES: { value: ReceiptType; label: string }[] = [
   { value: "return_credit", label: "مرتجع آجل" },
 ];
 
+export const RECEIPT_TYPE_LABELS: Record<ReceiptType, string> = {
+  cash: "إيصال نقدي",
+  credit: "إيصال آجل",
+  return_cash: "مرتجع نقدي",
+  return_credit: "مرتجع آجل",
+};
+
 // طرق الدفع
 export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "نقدي" },
@@ -43,18 +80,46 @@ export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "check", label: "شيك" },
 ];
 
-// الوحدات الافتراضية
-export const UNIT_OPTIONS = ["خدمة", "عدد", "م", "كجم", "علبة", "كيلو", "يوم", "ساعة"];
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  cash: "نقدي",
+  card: "بطاقة إلكترونية",
+  bank_transfer: "تحويل بنكي",
+  check: "شيك",
+};
 
-// تنسيق الأرقام بالعربي/الإنجليزي
+// الوحدات الافتراضية
+export const UNIT_OPTIONS = [
+  "خدمة",
+  "عدد",
+  "م",
+  "كجم",
+  "علبة",
+  "كيلو",
+  "يوم",
+  "ساعة",
+];
+
+// تنسيق العملة بالعربية
 export function formatEGP(amount: number): string {
-  return new Intl.NumberFormat("ar-EG", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount) + " ج.م";
+  const safe = Number.isFinite(amount) ? amount : 0;
+  return (
+    new Intl.NumberFormat("ar-EG", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(safe) + " ج.م"
+  );
 }
 
-// رقم إيصال افتراضي
+// تنسيق الأرقام بالإنجليزية داخل الحقول والملخصات
+export function formatNum(amount: number): string {
+  const safe = Number.isFinite(amount) ? amount : 0;
+  return new Intl.NumberFormat("en-EG", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(safe);
+}
+
+// توليد رقم إيصال افتراضي
 export function generateReceiptNumber(): string {
   const now = new Date();
   const y = now.getFullYear();
@@ -64,7 +129,7 @@ export function generateReceiptNumber(): string {
   return `R-${y}${m}${d}-${random}`;
 }
 
-// وقت حالي ISO
+// وقت حالي بصيغة ISO
 export function nowISO(): string {
   return new Date().toISOString();
 }
