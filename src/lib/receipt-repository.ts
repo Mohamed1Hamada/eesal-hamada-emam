@@ -11,8 +11,7 @@ import {
   isSupabaseConfigured,
 } from "./supabase";
 import {
-  type DbReceiptItemRow,
-  type DbReceiptRow,
+  type DbReceiptWithItemsRow,
   type SaveReceiptRpcResult,
   mapDbRowsToReceipt,
   mapReceiptToDbPayload,
@@ -233,31 +232,18 @@ export const supabaseReceiptRepository: ReceiptRepository = {
       throw new Error("إعدادات Supabase غير مكتملة");
     }
 
-    const { data: receiptsData, error: receiptsError } = await supabase
+    // جلب الإيصالات مع بنودها في استعلام علائقي واحد فقط
+    const { data, error } = await supabase
       .from("receipts")
-      .select("*")
+      .select("*, receipt_items(*)")
       .order("issued_at", { ascending: false })
       .limit(100);
 
-    if (receiptsError) throw receiptsError;
-    const rows = (receiptsData ?? []) as DbReceiptRow[];
-    if (rows.length === 0) return [];
+    if (error) throw error;
 
-    const ids = rows.map((r) => r.id);
-    const { data: itemsData, error: itemsError } = await supabase
-      .from("receipt_items")
-      .select("*")
-      .in("receipt_id", ids)
-      .order("line_number", { ascending: true });
-
-    if (itemsError) throw itemsError;
-    const allItems = (itemsData ?? []) as DbReceiptItemRow[];
-
+    const rows = (data ?? []) as DbReceiptWithItemsRow[];
     return rows.map((row) =>
-      mapDbRowsToReceipt(
-        row,
-        allItems.filter((item) => item.receipt_id === row.id)
-      )
+      mapDbRowsToReceipt(row, row.receipt_items ?? [])
     );
   },
 
