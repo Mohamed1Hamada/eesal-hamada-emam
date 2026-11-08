@@ -49,6 +49,10 @@ export interface DbReceiptItemRow {
   created_at?: string;
 }
 
+export interface DbReceiptWithItemsRow extends DbReceiptRow {
+  receipt_items?: DbReceiptItemRow[] | null;
+}
+
 export interface SaveReceiptRpcResult {
   receipt: DbReceiptRow;
   items: DbReceiptItemRow[];

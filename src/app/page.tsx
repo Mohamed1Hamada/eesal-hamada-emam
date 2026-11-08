@@ -6,19 +6,17 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { Session } from "@supabase/supabase-js";
 import ReceiptForm from "@/components/ReceiptForm";
 import ReceiptPreview from "@/components/ReceiptPreview";
+import ReceiptHistoryTable from "@/components/ReceiptHistoryTable";
 import LoginScreen from "@/components/LoginScreen";
+import { useSupabaseSession } from "@/hooks/useSupabaseSession";
 import { OFFICE_INFO, nowISO } from "@/lib/static-data";
 import {
   generateUUID,
   validateReceiptForSubmission,
 } from "@/lib/calculations";
-import {
-  createSupabaseBrowserClient,
-  isSupabaseConfigured,
-} from "@/lib/supabase";
+import { isSupabaseConfigured } from "@/lib/supabase";
 import {
   createEmptyReceipt,
   receiptRepository,
@@ -35,22 +33,7 @@ export default function Home() {
   );
 
   if (!isClient) {
-    return (
-      <div className="min-h-screen">
-        <header className="no-print bg-[var(--brand)] text-white shadow-lg">
-          <div className="max-w-7xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h1 className="text-xl md:text-2xl font-bold">
-                نظام الإيصالات الإلكترونية
-              </h1>
-              <p className="text-sm text-white/80">
-                {OFFICE_INFO.name} • مكتب محاسب قانوني
-              </p>
-            </div>
-          </div>
-        </header>
-      </div>
-    );
+    return <AppShellHeader />;
   }
 
   if (isSupabaseConfigured()) {
@@ -61,60 +44,11 @@ export default function Home() {
 }
 
 function AuthenticatedApp() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [checkingAuth, setCheckingAuth] = useState(true);
-
-  useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
-    if (!supabase) {
-      return;
-    }
-
-    let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (mounted) {
-        setSession(data.session);
-        setCheckingAuth(false);
-      }
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (mounted) {
-        setSession(nextSession);
-        setCheckingAuth(false);
-      }
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  async function handleSignOut() {
-    const supabase = createSupabaseBrowserClient();
-    await supabase?.auth.signOut();
-  }
+  const { session, checkingAuth, signOut } = useSupabaseSession();
 
   if (checkingAuth) {
     return (
-      <div className="min-h-screen">
-        <header className="no-print bg-[var(--brand)] text-white shadow-lg">
-          <div className="max-w-7xl mx-auto px-4 py-4">
-            <h1 className="text-xl md:text-2xl font-bold">
-              نظام الإيصالات الإلكترونية
-            </h1>
-            <p className="text-sm text-white/80">
-              {OFFICE_INFO.name} • مكتب محاسب قانوني
-            </p>
-          </div>
-        </header>
-        <main className="max-w-7xl mx-auto px-4 py-12 text-center text-sm text-slate-500">
-          جاري التحقق من جلسة الدخول...
-        </main>
-      </div>
+      <AppShellHeader message="جاري التحقق من جلسة الدخول..." />
     );
   }
 
@@ -125,8 +59,30 @@ function AuthenticatedApp() {
   return (
     <ReceiptApp
       userEmail={session.user.email ?? null}
-      onSignOut={handleSignOut}
+      onSignOut={signOut}
     />
+  );
+}
+
+function AppShellHeader({ message }: { message?: string }) {
+  return (
+    <div className="min-h-screen">
+      <header className="no-print bg-[var(--brand)] text-white shadow-lg">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <h1 className="text-xl md:text-2xl font-bold">
+            نظام الإيصالات الإلكترونية
+          </h1>
+          <p className="text-sm text-white/80">
+            {OFFICE_INFO.name} • مكتب محاسب قانوني
+          </p>
+        </div>
+      </header>
+      {message && (
+        <main className="max-w-7xl mx-auto px-4 py-12 text-center text-sm text-slate-500">
+          {message}
+        </main>
+      )}
+    </div>
   );
 }
 
@@ -137,9 +93,15 @@ function ReceiptApp({
   userEmail: string | null;
   onSignOut: (() => void) | null;
 }) {
-  const [receipt, setReceipt] = useState<Receipt>(
-    () => receiptRepository.loadDraft() ?? createEmptyReceipt()
-  );
+  const [initialState] = useState(() => {
+    const savedDraft = receiptRepository.loadDraft();
+    return {
+      hadSavedDraft: savedDraft !== null,
+      receipt: savedDraft ?? createEmptyReceipt(),
+    };
+  });
+
+  const [receipt, setReceipt] = useState<Receipt>(initialState.receipt);
   const [history, setHistory] = useState<Receipt[]>([]);
   const [activeTab, setActiveTab] = useState<"new" | "history">("new");
   const [toast, setToast] = useState<{
@@ -149,21 +111,38 @@ function ReceiptApp({
 
   const submitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // تحميل السجل من المخزن النشط (Supabase أو localStorage)
+  // تحميل السجل + تخصيص رقم متسلسل لأول إيصال جديد إذا لم توجد مسودة سابقة
   useEffect(() => {
     let active = true;
+
     receiptRepository
       .listReceipts()
       .then((items) => {
         if (active) setHistory(items);
       })
       .catch(() => {});
+
+    if (!initialState.hadSavedDraft && receiptRepository.mode === "supabase") {
+      receiptRepository
+        .nextReceiptNumber()
+        .then((seqNumber) => {
+          if (!active) return;
+          setReceipt((current) =>
+            current.id === initialState.receipt.id &&
+            current.submission?.status === "draft"
+              ? { ...current, receiptNumber: seqNumber }
+              : current
+          );
+        })
+        .catch(() => {});
+    }
+
     return () => {
       active = false;
     };
-  }, []);
+  }, [initialState]);
 
-  // حفظ المسودة تلقائياً (أو حذفها من المسودات عند قبول الإيصال)
+  // حفظ المسودة تلقائياً (أو مسحها عند قبول الإيصال)
   useEffect(() => {
     receiptRepository.saveDraft(receipt);
   }, [receipt]);
@@ -191,10 +170,6 @@ function ReceiptApp({
     }
   }
 
-  function handlePrint() {
-    window.print();
-  }
-
   async function handleNewReceipt() {
     cancelPendingSubmit();
     receiptRepository.clearDraft();
@@ -207,10 +182,7 @@ function ReceiptApp({
   function handleMockSubmit() {
     const validationError = validateReceiptForSubmission(receipt);
     if (validationError) {
-      setToast({
-        type: "error",
-        message: validationError,
-      });
+      setToast({ type: "error", message: validationError });
       return;
     }
 
@@ -257,7 +229,9 @@ function ReceiptApp({
         });
       } catch (err) {
         const errMsg =
-          err instanceof Error ? err.message : "تعذر حفظ الإيصال في قاعدة البيانات";
+          err instanceof Error
+            ? err.message
+            : "تعذر حفظ الإيصال في قاعدة البيانات";
         const failedReceipt: Receipt = {
           ...submittedReceipt,
           submission: {
@@ -396,7 +370,7 @@ function ReceiptApp({
               <div className="mt-6 bg-white rounded-xl p-5 shadow-sm border border-slate-200 flex flex-wrap gap-3">
                 <button
                   type="button"
-                  onClick={handlePrint}
+                  onClick={() => window.print()}
                   className="px-5 py-2.5 bg-slate-800 text-white rounded-lg font-medium hover:bg-slate-900 transition flex items-center gap-2"
                 >
                   🖨️ طباعة الإيصال
@@ -440,7 +414,9 @@ function ReceiptApp({
                       ? `يتم حفظ واسترجاع الإيصالات مباشرة من Supabase (${userEmail ?? "حساب المكتب"})`
                       : "الإيصالات تُحفظ حالياً في localStorage حتى تضيف مفاتيح Supabase في .env.local"}
                   </li>
-                  <li>زر «الإرسال للضرائب» محاكاة بدون اتصال حقيقي بمنظومة ETA بعد</li>
+                  <li>
+                    زر «الإرسال للضرائب» محاكاة بدون اتصال حقيقي بمنظومة ETA بعد
+                  </li>
                   <li>
                     حالة الاتصال:{" "}
                     <a
@@ -465,87 +441,10 @@ function ReceiptApp({
             </div>
           </div>
         ) : (
-          // سجل الإيصالات
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-            {history.length === 0 ? (
-              <div className="p-12 text-center text-slate-500">
-                <div className="text-4xl mb-2">📭</div>
-                <div className="text-lg font-medium">لا توجد إيصالات بعد</div>
-                <div className="text-sm mt-1">
-                  الإيصالات المقبولة من مصلحة الضرائب ستظهر هنا
-                </div>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50 border-b border-slate-200">
-                    <tr>
-                      <th className="px-4 py-3 text-right font-semibold">
-                        رقم الإيصال
-                      </th>
-                      <th className="px-4 py-3 text-right font-semibold">
-                        العميل
-                      </th>
-                      <th className="px-4 py-3 text-right font-semibold">
-                        التاريخ
-                      </th>
-                      <th className="px-4 py-3 text-right font-semibold">
-                        الإجمالي
-                      </th>
-                      <th className="px-4 py-3 text-right font-semibold">
-                        الحالة
-                      </th>
-                      <th className="px-4 py-3 text-right font-semibold">
-                        UUID
-                      </th>
-                      <th className="px-4 py-3"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {history.map((h) => (
-                      <tr
-                        key={h.id ?? h.receiptNumber + (h.submission?.uuid ?? "")}
-                        className="border-b border-slate-100 hover:bg-slate-50"
-                      >
-                        <td className="px-4 py-3 font-mono text-xs" dir="ltr">
-                          {h.receiptNumber}
-                        </td>
-                        <td className="px-4 py-3">{h.buyer.name}</td>
-                        <td className="px-4 py-3 text-xs">
-                          {new Date(h.dateTime).toLocaleDateString("ar-EG")}
-                        </td>
-                        <td className="px-4 py-3 font-semibold" dir="ltr">
-                          {h.totals.total.toFixed(2)} ج.م
-                        </td>
-                        <td className="px-4 py-3">
-                          {h.submission?.status === "accepted" && (
-                            <span className="text-green-700 text-xs">
-                              ✓ مقبول
-                            </span>
-                          )}
-                        </td>
-                        <td
-                          className="px-4 py-3 font-mono text-xs text-slate-500"
-                          dir="ltr"
-                        >
-                          {h.submission?.uuid?.slice(0, 8)}...
-                        </td>
-                        <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={() => loadFromHistory(h)}
-                            className="text-[var(--brand)] hover:underline text-xs font-medium"
-                          >
-                            فتح
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          <ReceiptHistoryTable
+            history={history}
+            onOpenReceipt={loadFromHistory}
+          />
         )}
       </main>
 

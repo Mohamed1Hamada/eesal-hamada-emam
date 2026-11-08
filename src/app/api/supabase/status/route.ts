@@ -34,22 +34,20 @@ export async function GET() {
         message: "إعدادات Supabase غير مكتملة.",
         storageSwitched: false,
       },
-      500,
+      500
     );
   }
 
   try {
-    const { error } = await supabase
-      .from("receipts")
-      .select("id", { head: true, count: "exact" })
-      .limit(1);
+    // استخدام GET عادي بدلاً من HEAD لقراءة كود ورسالة سياسات RLS بدقة
+    const { error } = await supabase.from("receipts").select("id").limit(1);
 
     if (!error) {
       return json({
         ok: true,
         state: "connected",
         message: "تم الاتصال بـSupabase وجدول receipts متاح.",
-        storageSwitched: false,
+        storageSwitched: true,
       });
     }
 
@@ -65,7 +63,7 @@ export async function GET() {
         ok: false,
         state: "schema_missing",
         message:
-          "تم الوصول إلى Supabase، لكن جدول receipts غير موجود. شغّل ملف SQL أولاً.",
+          "تم الوصول إلى Supabase، لكن جدول receipts غير موجود. شغّل ملفات SQL أولاً.",
         storageSwitched: false,
       });
     }
@@ -73,15 +71,15 @@ export async function GET() {
     if (
       code === "42501" ||
       /permission denied|row-level security|unauthorized|forbidden/i.test(
-        message,
+        message
       )
     ) {
       return json({
         ok: true,
         state: "rls_protected",
         message:
-          "تم الوصول إلى Supabase والجدول موجود، لكن الوصول مقفل بسياسات RLS. هذا متوقع وآمن قبل إضافة تسجيل الدخول.",
-        storageSwitched: false,
+          "الاتصال بـSupabase سليم والجدول محمي بسياسات RLS ضد الزوار غير المسجلين. يعمل الحفظ تلقائياً بعد تسجيل دخول المكتب.",
+        storageSwitched: true,
       });
     }
 
@@ -89,7 +87,7 @@ export async function GET() {
       ok: false,
       state: "reachable_with_error",
       message: "تم الوصول إلى Supabase، لكن فحص الجدول لم يكتمل.",
-      detail: message,
+      detail: message || code,
       storageSwitched: false,
     });
   } catch {
@@ -101,7 +99,7 @@ export async function GET() {
           "تعذر الوصول إلى Supabase. تحقق من رابط المشروع أو الاتصال بالإنترنت.",
         storageSwitched: false,
       },
-      503,
+      503
     );
   }
 }
