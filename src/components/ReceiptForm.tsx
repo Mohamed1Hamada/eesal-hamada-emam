@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import type { ReactNode } from "react";
 import type {
   Receipt,
   ReceiptItem,
@@ -12,57 +12,57 @@ import {
   PAYMENT_METHODS,
   TAX_RATES,
   UNIT_OPTIONS,
+  formatNum,
 } from "@/lib/static-data";
 import { calculateTotals, getTaxByCode } from "@/lib/calculations";
+import { createEmptyItem } from "@/lib/receipt-repository";
+
+export { createEmptyItem };
 
 interface Props {
   receipt: Receipt;
   setReceipt: (r: Receipt) => void;
 }
 
-function createEmptyItem(): ReceiptItem {
-  const tax = TAX_RATES[0];
-  return {
-    id: crypto.randomUUID?.() ?? Math.random().toString(36).slice(2),
-    description: "",
-    itemCode: "",
-    unit: "خدمة",
-    quantity: 1,
-    unitPrice: 0,
-    taxCode: tax.code,
-    taxRate: tax.rate,
-    discount: 0,
-  };
-}
-
-export { createEmptyItem };
-
 export default function ReceiptForm({ receipt, setReceipt }: Props) {
-  const formId = useId();
+  const status = receipt.submission?.status ?? "draft";
+  const isLocked = status === "accepted" || status === "submitted";
 
   function updateReceipt(patch: Partial<Receipt>) {
+    if (isLocked) return;
     setReceipt({ ...receipt, ...patch });
   }
 
   function updateBuyer(patch: Partial<Receipt["buyer"]>) {
-    setReceipt({ ...receipt, buyer: { ...receipt.buyer, ...patch } });
+    if (isLocked) return;
+    const nextBuyer = { ...receipt.buyer, ...patch };
+    if (patch.type === "person") {
+      nextBuyer.taxNumber = "";
+    } else if (patch.type === "business") {
+      nextBuyer.nationalId = "";
+    }
+    setReceipt({ ...receipt, buyer: nextBuyer });
   }
 
   function updateItem(id: string, patch: Partial<ReceiptItem>) {
-    const newItems = receipt.items.map((it) =>
-      it.id === id ? { ...it, ...patch } : it
-    );
-    // لو غير كود الضريبة نحدث النسبة تلقائياً
-    if (patch.taxCode) {
-      const tax = getTaxByCode(patch.taxCode);
-      const idx = newItems.findIndex((it) => it.id === id);
-      if (idx >= 0) newItems[idx].taxRate = tax.rate;
-    }
+    if (isLocked) return;
+    const newItems = receipt.items.map((it) => {
+      if (it.id !== id) return it;
+      const updated = { ...it, ...patch };
+      if (patch.taxCode) {
+        const tax = getTaxByCode(patch.taxCode);
+        updated.taxCode = tax.code;
+        updated.taxRate = tax.rate;
+      }
+      return updated;
+    });
+
     const totals = calculateTotals(newItems, receipt.totals.paidAmount);
     setReceipt({ ...receipt, items: newItems, totals });
   }
 
   function addItem() {
+    if (isLocked) return;
     const newItems = [...receipt.items, createEmptyItem()];
     setReceipt({
       ...receipt,
@@ -72,6 +72,7 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
   }
 
   function removeItem(id: string) {
+    if (isLocked) return;
     const newItems = receipt.items.filter((it) => it.id !== id);
     setReceipt({
       ...receipt,
@@ -81,6 +82,7 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
   }
 
   function updatePaid(value: number | undefined) {
+    if (isLocked) return;
     setReceipt({
       ...receipt,
       totals: calculateTotals(receipt.items, value),
@@ -88,7 +90,7 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
   }
 
   return (
-    <div className="space-y-6">
+    <fieldset disabled={isLocked} className="space-y-6 disabled:opacity-80">
       {/* نوع الإيصال وطريقة الدفع */}
       <section className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
         <h2 className="text-lg font-bold mb-4 text-[var(--brand)]">
@@ -145,11 +147,13 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
             <input
               type="datetime-local"
               value={toLocalInput(receipt.dateTime)}
-              onChange={(e) =>
-                updateReceipt({
-                  dateTime: new Date(e.target.value).toISOString(),
-                })
-              }
+              onChange={(e) => {
+                const val = e.target.value;
+                if (!val) return;
+                const parsed = new Date(val);
+                if (Number.isNaN(parsed.getTime())) return;
+                updateReceipt({ dateTime: parsed.toISOString() });
+              }}
               className="form-input"
               dir="ltr"
             />
@@ -203,8 +207,13 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
             <Field label="الرقم القومي">
               <input
                 type="text"
+                inputMode="numeric"
                 value={receipt.buyer.nationalId ?? ""}
-                onChange={(e) => updateBuyer({ nationalId: e.target.value })}
+                onChange={(e) =>
+                  updateBuyer({
+                    nationalId: e.target.value.replace(/\D/g, "").slice(0, 14),
+                  })
+                }
                 placeholder="14 رقم"
                 className="form-input"
                 dir="ltr"
@@ -238,10 +247,13 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
       {/* الأصناف */}
       <section className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-bold text-[var(--brand)]">الأصناف / الخدمات</h2>
+          <h2 className="text-lg font-bold text-[var(--brand)]">
+            الأصناف / الخدمات
+          </h2>
           <button
+            type="button"
             onClick={addItem}
-            className="px-4 py-2 bg-[var(--brand)] text-white rounded-lg text-sm font-medium hover:bg-[var(--brand-dark)] transition"
+            className="px-4 py-2 bg-[var(--brand)] text-white rounded-lg text-sm font-medium hover:bg-[var(--brand-dark)] transition disabled:opacity-50"
           >
             + إضافة صنف
           </button>
@@ -250,7 +262,7 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
         <div className="space-y-4">
           {receipt.items.length === 0 && (
             <div className="text-center py-8 text-slate-500 border-2 border-dashed border-slate-200 rounded-lg">
-              لا توجد أصناف بعد. اضغط "إضافة صنف" للبدء.
+              لا توجد أصناف بعد. اضغط «إضافة صنف» للبدء.
             </div>
           )}
 
@@ -264,21 +276,25 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
                   صنف {idx + 1}
                 </div>
                 <button
+                  type="button"
                   onClick={() => removeItem(item.id)}
-                  className="text-red-600 hover:text-red-800 text-sm font-medium"
+                  className="text-red-600 hover:text-red-800 text-sm font-medium disabled:opacity-50"
                 >
                   حذف
                 </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                <Field label="البيان / الوصف *" className="md:col-span-2 lg:col-span-3">
+                <Field
+                  label="البيان / الوصف *"
+                  className="md:col-span-2 lg:col-span-3"
+                >
                   <input
                     type="text"
                     value={item.description}
                     onChange={(e) =>
                       updateItem(item.id, { description: e.target.value })
                     }
-                    placeholder="مثال: مراجعة حسابات شهر يناير 2025"
+                    placeholder="مثال: مراجعة حسابات شهر يناير 2026"
                     className="form-input"
                   />
                 </Field>
@@ -333,11 +349,12 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
                     min={0}
                     step="0.01"
                     value={item.quantity}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
                       updateItem(item.id, {
-                        quantity: parseFloat(e.target.value) || 0,
-                      })
-                    }
+                        quantity: Number.isFinite(val) ? Math.max(0, val) : 0,
+                      });
+                    }}
                     className="form-input"
                   />
                 </Field>
@@ -348,11 +365,12 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
                     min={0}
                     step="0.01"
                     value={item.unitPrice}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
                       updateItem(item.id, {
-                        unitPrice: parseFloat(e.target.value) || 0,
-                      })
-                    }
+                        unitPrice: Number.isFinite(val) ? Math.max(0, val) : 0,
+                      });
+                    }}
                     className="form-input"
                   />
                 </Field>
@@ -364,11 +382,14 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
                     max={100}
                     step="0.01"
                     value={item.discount}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
                       updateItem(item.id, {
-                        discount: parseFloat(e.target.value) || 0,
-                      })
-                    }
+                        discount: Number.isFinite(val)
+                          ? Math.min(100, Math.max(0, val))
+                          : 0,
+                      });
+                    }}
                     className="form-input"
                   />
                 </Field>
@@ -380,7 +401,9 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
 
       {/* الإجماليات */}
       <section className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
-        <h2 className="text-lg font-bold mb-4 text-[var(--brand)]">الإجماليات والدفع</h2>
+        <h2 className="text-lg font-bold mb-4 text-[var(--brand)]">
+          الإجماليات والدفع
+        </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-3">
             <Field label="المبلغ المدفوع (ج.م)">
@@ -391,7 +414,12 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
                 value={receipt.totals.paidAmount ?? ""}
                 onChange={(e) => {
                   const v = e.target.value;
-                  updatePaid(v === "" ? undefined : parseFloat(v));
+                  if (v === "") {
+                    updatePaid(undefined);
+                  } else {
+                    const num = parseFloat(v);
+                    updatePaid(Number.isFinite(num) ? Math.max(0, num) : 0);
+                  }
                 }}
                 placeholder="اتركه فارغاً لو لم يدفع بعد"
                 className="form-input"
@@ -436,31 +464,24 @@ export default function ReceiptForm({ receipt, setReceipt }: Props) {
               <div className="flex justify-between text-sm">
                 <span className="text-slate-600">الباقي للعميل:</span>
                 <span className="font-semibold text-green-700" dir="ltr">
-                  {formatNum(
-                    Math.max(
-                      0,
-                      receipt.totals.paidAmount - receipt.totals.total
-                    )
-                  )}{" "}
-                  ج.م
+                  {formatNum(receipt.totals.changeAmount ?? 0)} ج.م
                 </span>
               </div>
             )}
           </div>
         </div>
       </section>
-    </div>
+    </fieldset>
   );
 }
 
-// مكون حقل مشترك
 function Field({
   label,
   children,
   className = "",
 }: {
   label: string;
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
 }) {
   return (
@@ -471,9 +492,9 @@ function Field({
   );
 }
 
-// تحويل ISO لقيمة input datetime-local
 function toLocalInput(iso: string): string {
   const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   return (
     d.getFullYear() +
@@ -486,11 +507,4 @@ function toLocalInput(iso: string): string {
     ":" +
     pad(d.getMinutes())
   );
-}
-
-function formatNum(n: number): string {
-  return new Intl.NumberFormat("en-EG", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
 }

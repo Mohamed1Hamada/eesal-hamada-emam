@@ -1,13 +1,19 @@
-import { db } from "@/db";
-import { sql } from "drizzle-orm";
+import { getSupabasePublicConfig } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  try {
-    await db.execute(sql`select 1`);
-    return Response.json({ ok: true });
-  } catch {
-    return Response.json({ ok: false }, { status: 500 });
-  }
+  const supabaseConfig = getSupabasePublicConfig();
+
+  return Response.json(
+    {
+      ok: true,
+      service: "eesal-hamada-emam",
+      supabaseConfigured: Boolean(supabaseConfig),
+      timestamp: new Date().toISOString(),
+    },
+    {
+      headers: { "Cache-Control": "no-store" },
+    }
+  );
 }

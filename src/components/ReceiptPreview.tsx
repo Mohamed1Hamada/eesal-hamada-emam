@@ -1,47 +1,29 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import QRCode from "qrcode";
 import type { Receipt } from "@/lib/types";
-import { formatEGP } from "@/lib/static-data";
-import { calculateItemAmount } from "@/lib/calculations";
+import {
+  PAYMENT_METHOD_LABELS,
+  RECEIPT_TYPE_LABELS,
+  formatEGP,
+} from "@/lib/static-data";
+import {
+  buildQRData,
+  calculateItemAmount,
+  getTaxByCode,
+} from "@/lib/calculations";
 
 interface Props {
   receipt: Receipt;
 }
 
-// نوع الإيصال بالعربي
-const RECEIPT_TYPE_LABELS: Record<string, string> = {
-  cash: "إيصال نقدي",
-  credit: "إيصال آجل",
-  return_cash: "مرتجع نقدي",
-  return_credit: "مرتجع آجل",
-};
-
-const PAYMENT_LABELS: Record<string, string> = {
-  cash: "نقدي",
-  card: "بطاقة إلكترونية",
-  bank_transfer: "تحويل بنكي",
-  check: "شيك",
-};
-
 export default function ReceiptPreview({ receipt }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [qrText, setQrText] = useState("");
 
   useEffect(() => {
     if (!canvasRef.current) return;
-    // بناء نص الـ QR بنفس الصيغة المطلوبة
-    const qrRaw = [
-      "ETA",
-      receipt.seller.taxNumber,
-      receipt.receiptNumber,
-      receipt.dateTime,
-      receipt.totals.total.toFixed(2),
-      receipt.totals.totalTax.toFixed(2),
-      receipt.submission?.uuid || "DRAFT",
-    ].join("|");
-    setQrText(qrRaw);
+    const qrRaw = buildQRData(receipt);
     QRCode.toCanvas(
       canvasRef.current,
       qrRaw,
@@ -52,13 +34,16 @@ export default function ReceiptPreview({ receipt }: Props) {
     );
   }, [receipt]);
 
-  const dateFormatted = new Date(receipt.dateTime).toLocaleString("ar-EG", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const parsedDate = new Date(receipt.dateTime);
+  const dateFormatted = Number.isNaN(parsedDate.getTime())
+    ? "-"
+    : parsedDate.toLocaleString("ar-EG", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
 
   return (
     <div
@@ -109,7 +94,7 @@ export default function ReceiptPreview({ receipt }: Props) {
         <div>
           <span className="text-slate-500">طريقة الدفع:</span>{" "}
           <span className="font-semibold">
-            {PAYMENT_LABELS[receipt.paymentMethod]}
+            {PAYMENT_METHOD_LABELS[receipt.paymentMethod]}
           </span>
         </div>
         <div className="col-span-2">
@@ -139,13 +124,13 @@ export default function ReceiptPreview({ receipt }: Props) {
           <span className="text-slate-500">الاسم:</span>{" "}
           <span className="font-semibold">{receipt.buyer.name}</span>
         </div>
-        {receipt.buyer.taxNumber && (
+        {receipt.buyer.type === "business" && receipt.buyer.taxNumber && (
           <div>
             <span className="text-slate-500">رقم التسجيل:</span>{" "}
             <span>{receipt.buyer.taxNumber}</span>
           </div>
         )}
-        {receipt.buyer.nationalId && !receipt.buyer.taxNumber && (
+        {receipt.buyer.type === "person" && receipt.buyer.nationalId && (
           <div>
             <span className="text-slate-500">الرقم القومي:</span>{" "}
             <span>{receipt.buyer.nationalId}</span>
@@ -177,6 +162,7 @@ export default function ReceiptPreview({ receipt }: Props) {
         </div>
         {receipt.items.map((item, idx) => {
           const calc = calculateItemAmount(item);
+          const taxInfo = getTaxByCode(item.taxCode);
           return (
             <div key={item.id} className="mb-1.5">
               <div className="grid grid-cols-12 gap-0.5 text-[10px]">
@@ -191,9 +177,7 @@ export default function ReceiptPreview({ receipt }: Props) {
               </div>
               <div className="grid grid-cols-12 gap-0.5 text-[9px] text-slate-500">
                 <div className="col-span-8">
-                  {item.taxRate > 0
-                    ? `ض.ق.م ${(item.taxRate * 100).toFixed(0)}%`
-                    : "غير خاضع / معفي"}
+                  {taxInfo.shortLabel}
                   {item.discount > 0 && ` • خصم ${item.discount}%`}
                 </div>
                 <div className="col-span-4 text-left">
@@ -238,11 +222,7 @@ export default function ReceiptPreview({ receipt }: Props) {
             </div>
             <div className="flex justify-between font-semibold">
               <span>الباقي:</span>
-              <span>
-                {formatEGP(
-                  Math.max(0, receipt.totals.paidAmount - receipt.totals.total)
-                )}
-              </span>
+              <span>{formatEGP(receipt.totals.changeAmount ?? 0)}</span>
             </div>
           </>
         )}
@@ -279,7 +259,8 @@ export default function ReceiptPreview({ receipt }: Props) {
             "⏳ جاري إرسال الإيصال..."}
           {receipt.submission.status === "rejected" &&
             `✗ مرفوض: ${receipt.submission.errorMessage}`}
-          {receipt.submission.status === "draft" && "⚠️ مسودة - لم يتم الإرسال بعد"}
+          {receipt.submission.status === "draft" &&
+            "⚠️ مسودة - لم يتم الإرسال بعد"}
           {receipt.submission.status === "failed" &&
             `✗ فشل الإرسال: ${receipt.submission.errorMessage}`}
         </div>
